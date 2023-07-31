@@ -1,20 +1,14 @@
 import torch
 import yaml
-import sys
 from tqdm.auto import tqdm
 import os
 import torchvision.transforms as transforms
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import datetime
 from pathlib import Path
 from utils.utils import *
-from utils.loss_func import dice_loss, dice_coeff
-from utils.dataloader import MyDataLoader
-from models.unet.unet_model import UNet
-import cv2
-from utils.loss_func import dice_loss
 
 # from models.CRF.crf_model import crf
 
@@ -84,6 +78,11 @@ class Trainer:
         self.optimizer = get_optimizer(self.model, self.cfg["train"]["optimizer"])
         self.criterion = get_criterion(self.cfg["train"]["criterion"])
         self.scheduler = get_scheduler(self.optimizer, self.cfg["train"]["lr_scheduler"])
+        try:
+            ## if validation metric is not set, set criterion as metric
+            self.val_metric = get_metric(self.cfg["validate"]["metric"])
+        except:
+            self.val_metric = self.criterion
 
     def set_train_dataloader(
         self,
@@ -141,12 +140,15 @@ class Trainer:
             total_loss += loss.item()
             loss.backward()
             self.optimizer.step()
+
             if self.writer is not None:
+                ## logging to tensorboard
                 self.writer.add_scalar(
                     "Train Loss",
                     loss.item(),
                     batch_idx + current_epoch * (len(self.train_dataloader)),
                 )
+                ## if using multiple losses
                 if type(losses) == dict:
                     for key, value in losses.items():
                         self.writer.add_scalar(
@@ -156,6 +158,7 @@ class Trainer:
                         )
             batch_idx += 1
 
+        ## log per epoch
         if self.writer is not None:
             self.writer.add_scalar(
                 "Train Loss per Epoch", total_loss / len(self.train_dataloader), current_epoch
@@ -187,8 +190,8 @@ class Trainer:
                 else:
                     output = outputs
 
-                total_dice_score += dice_coeff_batch(
-                    input=output2mask(output), target=target.unsqueeze(dim=1)
+                total_dice_score += self.val_metric(
+                    input=(output > 0.5).float(), target=target
                 ).item()
 
         print("Validation loss=", total_val_loss / len(self.val_dataloader))
@@ -247,26 +250,26 @@ class Trainer:
                         f"{self.save_dir}/{ckpt_name}",
                     )
 
-    def validate(self):
-        total_val_loss = 0
-        total_dice_score = 0
-        self.model.eval()
-        print("Validation")
-        with torch.no_grad():
-            for data, target in tqdm(self.val_dataloader):
-                data, target = data.to(self.device, dtype=torch.float32), target.to(
-                    self.device, dtype=torch.float32
-                )
-                output = self.model(data)
-                target = target.unsqueeze(dim=1)
+    # def validate(self):
+    #     total_val_loss = 0
+    #     total_dice_score = 0
+    #     self.model.eval()
+    #     print("Validation")
+    #     with torch.no_grad():
+    #         for data, target in tqdm(self.val_dataloader):
+    #             data, target = data.to(self.device, dtype=torch.float32), target.to(
+    #                 self.device, dtype=torch.float32
+    #             )
+    #             output = self.model(data)
+    #             target = target.unsqueeze(dim=1)
 
-                dice = dice_coeff_batch(
-                    input=output2mask(output), target=target.unsqueeze(dim=1)
-                ).item()
-                # print(dice)
-                total_dice_score += dice
-                # break
-        print("final dice loss", total_dice_score / len(self.val_dataloader))
+    #             dice = dice_coeff_batch(
+    #                 input=output2mask(output), target=target.unsqueeze(dim=1)
+    #             ).item()
+    #             # print(dice)
+    #             total_dice_score += dice
+    #             # break
+    #     print("final dice loss", total_dice_score / len(self.val_dataloader))
 
     def inference(self, x):
         self.model.eval()
@@ -298,6 +301,15 @@ class Trainer:
         )
 
     def _get_loss(self, output, target):
+        """get loss value
+
+        Args:
+            output (Tensor): output from models
+            target (Tensor): target y values
+
+        Returns:
+            scalar, dict: total loss values, losses as dict type
+        """
         len_output = 1
         weight = self.cfg["train"]["criterion"]["weight"]
         if self.multi_loss:

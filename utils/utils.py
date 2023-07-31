@@ -59,13 +59,14 @@ def get_criterion(cfg):
     """
     criterion_name = cfg["name"].lower()
     print("Criterion: ", criterion_name)
-    if criterion_name == "crossentropyloss":
-        criterion = torch.nn.BCEWithLogitsLoss()
-    elif criterion_name == "bce-dice":
-        criterion = bce_dice
-    else:
+    criterion_dict = {
+        "crossentropyloss": torch.nn.BCEWithLogitsLoss(),
+        "bce-dice": bce_dice,
+    }
+    try:
+        return criterion_dict[criterion_name]
+    except:
         raise NotImplementedError
-    return criterion
 
 
 def get_metric(cfg):
@@ -73,7 +74,9 @@ def get_metric(cfg):
     Return metric function for validation or test
     """
     metric_name = cfg["name"].lower()
-    metric_dict = {"dice": dice_coeff_batch}
+    metric_dict = {
+        "dice": dice_coeff_batch,
+    }
     try:
         return metric_dict[metric_name]
     except:

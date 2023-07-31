@@ -22,5 +22,8 @@ train:
       mode: min
   log-interval: 10
 
+validate:
+  metric: dice
+
 test:
   batch-size: 256
